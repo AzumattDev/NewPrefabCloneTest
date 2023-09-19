@@ -197,11 +197,11 @@ namespace NewPrefabCloneTest
                     }
                 }
             }
-            newItemComponent.localizedItemName.RefreshString();
-            newItemComponent.localizedItemDescription.RefreshString();
+            newItemComponent.localizedItemName.RefreshString(); // Attempt to refresh both strings just before using them.
+            newItemComponent.localizedItemDescription.RefreshString(); // Attempt to refresh both strings just before using them.
             NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"NewPrefabCloneTest created! with ID: {newItemComponent.ItemID} " +
                                                                        $"and name: {newItemComponent.name} " +
-                                                                       $"and display name: {newItemComponent.GetDisplayName()} and localized name: {LocalizationRuntimeManager.GetString(newItemComponent.localizedItemName)} and description: {LocalizationRuntimeManager.GetString(newItemComponent.localizedItemDescription)}");
+                                                                       $"and display name: {newItemComponent.GetDisplayName()} and description {newItemComponent.GetDisplayDescription()} and localized name: {LocalizationRuntimeManager.GetString(newItemComponent.localizedItemName)} and localized description: {LocalizationRuntimeManager.GetString(newItemComponent.localizedItemDescription)}");
 
             // Print all items and their names/descriptions from the allItems list
             foreach (Transform allItemsItem in __instance.allItems.items)
@@ -209,7 +209,7 @@ namespace NewPrefabCloneTest
                 Item itemComponent = allItemsItem.GetComponent<Item>();
                 if (itemComponent && item.ItemID == newItemComponent.ItemID)
                 {
-                    NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"item name: {newItemComponent.ItemID} itemname {newItemComponent.name} display name{newItemComponent._displayName} ID: {newItemComponent.ItemID}");
+                    NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"item ID: {newItemComponent.ItemID} item name {newItemComponent.name} display name internal{newItemComponent._displayName}");
                 }
             }
         }
