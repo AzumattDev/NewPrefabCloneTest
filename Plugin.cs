@@ -138,21 +138,13 @@ namespace NewPrefabCloneTest
 
             newPrefab.name = "NewPrefabCloneTest";
             newItemComponent.name = "NewPrefabCloneTest";
-            newItemComponent.DisplayDescription = "NewPrefabCloneTest_Description";
-            newItemComponent._displayDescription = "NewPrefabCloneTest_Description";
-            newItemComponent.DisplayName = "NewPrefabCloneTest";
-            newItemComponent._displayName = "NewPrefabCloneTest";
             // Find the max ItemID and set the new one
             int maxID = __instance.allItems.items.Max(i => i.GetComponent<Item>()?.ItemID ?? 0);
             newItemComponent.ItemID = maxID + 1;
             newItemComponent.itemIndex = newItemComponent.ItemID;
-            newItemComponent.localizedItemName = LocalizationRuntimeManager.CreateLocalizedString(NewPrefabCloneTestPlugin.ModName, newItemComponent.ItemID.ToString(), "NewPrefabCloneTest");
-            newItemComponent.localizedItemName.TableReference = NewPrefabCloneTestPlugin.ModName;
-            newItemComponent.localizedItemName.TableEntryReference = newItemComponent.ItemID.ToString();
+            newItemComponent.localizedItemName = LocalizationRuntimeManager.CreateLocalizedString(LocalizationSettings.StringDatabase.DefaultTable, $"{newPrefab.name}_{newItemComponent.ItemID.ToString()}", "NewPrefabCloneTest");
             newItemComponent.localizedItemName.FallbackState = FallbackBehavior.UseFallback;
-            newItemComponent.localizedItemDescription = LocalizationRuntimeManager.CreateLocalizedString(NewPrefabCloneTestPlugin.ModName + "_descriptions", newItemComponent.ItemID.ToString(), "Test Description");
-            newItemComponent.localizedItemDescription.TableReference = NewPrefabCloneTestPlugin.ModName + "_descriptions";
-            newItemComponent.localizedItemDescription.TableEntryReference = newItemComponent.ItemID.ToString();
+            newItemComponent.localizedItemDescription = LocalizationRuntimeManager.CreateLocalizedString(LocalizationSettings.StringDatabase.DefaultTable, $"{newPrefab.name}_{newItemComponent.ItemID.ToString()}_description", "Test Description");
             newItemComponent.localizedItemDescription.FallbackState = FallbackBehavior.UseFallback;
             newItemComponent.GetCurrentLocaleAndRefresh();
 
@@ -197,6 +189,7 @@ namespace NewPrefabCloneTest
                     }
                 }
             }
+
             newItemComponent.localizedItemName.RefreshString(); // Attempt to refresh both strings just before using them.
             newItemComponent.localizedItemDescription.RefreshString(); // Attempt to refresh both strings just before using them.
             NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"NewPrefabCloneTest created! with ID: {newItemComponent.ItemID} " +
@@ -222,7 +215,7 @@ namespace NewPrefabCloneTest
 
         public static LocalizedString CreateLocalizedString(string tableName, string key, string value)
         {
-            // Ensure the table exists
+            // If not in the default table, then check runtimeTables and add/update there
             if (!runtimeTables.ContainsKey(tableName))
             {
                 var table = ScriptableObject.CreateInstance<StringTable>();
@@ -231,18 +224,18 @@ namespace NewPrefabCloneTest
                 runtimeTables[tableName] = table;
             }
 
-
-            // Add the entry to the table
-            runtimeTables[tableName].AddEntry(key, value);
+            // Add the entry to the table in runtimeTables
+            //runtimeTables[tableName].AddEntry(key, value);
+            LocalizationSettings.StringDatabase.GetTable(LocalizationSettings.StringDatabase.DefaultTable).AddEntry(key, value);
             // Logging added entry
             NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"Added entry with key: {key} and value: {value} to table: {tableName}");
-
 
             // Create a LocalizedString pointing to that entry
             LocalizedString localizedString = new LocalizedString
             {
-                TableReference = tableName,
-                TableEntryReference = key
+                TableReference = LocalizationSettings.StringDatabase.DefaultTable,
+                TableEntryReference = key,
+                LocaleOverride = LocalizationSettings.SelectedLocale
             };
 
             return localizedString;
