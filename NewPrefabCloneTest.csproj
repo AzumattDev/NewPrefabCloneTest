@@ -116,8 +116,15 @@
         <Reference Include="UnityEngine.UI">
             <HintPath>$(CorlibPath)\UnityEngine.UI.dll</HintPath>
         </Reference>
+        <Reference Include="UnityEngine.UnityWebRequestModule">
+          <HintPath>..\..\..\..\Program Files (x86)\Steam\steamapps\common\Sunkenland\Sunkenland_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.UnityWebRequestTextureModule">
+          <HintPath>..\..\..\..\Program Files (x86)\Steam\steamapps\common\Sunkenland\Sunkenland_Data\Managed\UnityEngine.UnityWebRequestTextureModule.dll</HintPath>
+        </Reference>
     </ItemGroup>
     <ItemGroup>
+        <Compile Include="ItemManager.cs" />
         <Compile Include="Plugin.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
     </ItemGroup>
