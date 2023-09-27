@@ -21,15 +21,20 @@ namespace ItemManager;
 [PublicAPI]
 public enum WorkTable
 {
-    Disabled,
-    Inventory,
-    [InternalName("F1_Stove")] Stove,
-    [InternalName("A1_Research Table")] ResearchTable,
-    [InternalName("B2_Avil")] Anvil,
-    [InternalName("C1_Gun Workshop")] GunWorkshop,
-    [InternalName("C2_Ammo Workshop")] AmmoWorkShop,
-    [InternalName("C3_Armor Workshop")] ArmorWorkShop,
-    Custom,
+    None,
+    Gun,
+    Armor,
+    Ammo,
+    Chemical,
+    Heavy,
+    Anvil,
+    Sawmill,
+    ResearchTable,
+    Stove,
+    CoffeeMachine,
+    ElectricOven,
+    Blender,
+    Simpleworkshop,
 }
 
 public class InternalName : Attribute
@@ -54,13 +59,24 @@ public class CraftingStationList
     public readonly List<WorkTableConfig> Stations = new();
 
     public void Add(WorkTable table, int level) => Stations.Add(new WorkTableConfig { Table = table, level = level });
-    public void Add(string customTable, int level) => Stations.Add(new WorkTableConfig { Table = WorkTable.Custom, level = level, custom = customTable });
+    //public void Add(string customTable, int level) => Stations.Add(new WorkTableConfig { Table = WorkTable.Custom, level = level, custom = customTable });
+}
+
+[PublicAPI]
+public class WeaponRaycastConfigList
+{
+    public readonly List<WeaponRayCastConfig> Requirements = new();
+    public bool Free = false; // If Requirements empty and Free is true, then it costs nothing. If Requirements empty and Free is false, then it won't be craftable.
+
+    public void Add(string itemName, int amount, int quality = 0) => Requirements.Add(new WeaponRayCastConfig { itemName = itemName, amount = amount, quality = quality });
+    public void Add(string itemName, ConfigEntry<int> amountConfig, int quality = 0) => Requirements.Add(new WeaponRayCastConfig { itemName = itemName, amountConfig = amountConfig, quality = quality });
 }
 
 [PublicAPI]
 public class CustomItemRequirement
 {
     public readonly RequiredResourceList RequiredItems = new();
+    public readonly WeaponRaycastConfigList RayCastConfigList = new();
     public readonly RequiredResourceList RequiredUpgradeItems = new();
     public readonly CraftingStationList Crafting = new();
     public int CraftAmount = 1;
@@ -69,6 +85,8 @@ public class CustomItemRequirement
     public ConfigEntryBase? CustomItemRequirementIsActive = null;
     public int Level = 1;
     public bool Rare = false;
+    public bool Craftable = true;
+    public CraftingCategory Category = CraftingCategory.weapons;
     public int Amount = 1;
     public int Stack = 1;
     public bool CanBeSold = true;
@@ -79,6 +97,16 @@ public class CustomItemRequirement
 }
 
 public struct Requirement
+{
+    public string itemName;
+    public int amount;
+    public ConfigEntry<int>? amountConfig;
+
+    [Description("Set to a non-zero value to apply the requirement only for a specific quality")]
+    public int quality;
+}
+
+public struct WeaponRayCastConfig
 {
     public string itemName;
     public int amount;
@@ -134,6 +162,7 @@ public class CustomItem
     }
 
     private static readonly List<CustomItem> registeredItems = new();
+    private static readonly Dictionary<CustomItem, Item> registeredItemsItemComp = new();
     private static readonly Dictionary<Item, CustomItem> ItemMap = new();
     private static Dictionary<CustomItem, Dictionary<string, List<CraftingItemRequirement>>> activeCustomItemRequirements = new();
     private static Dictionary<CustomItem, Dictionary<string, ItemConfig>> itemCraftConfigs = new();
@@ -151,6 +180,9 @@ public class CustomItem
 
     [Description("Specifies the resources needed to craft the item.\nUse .Add to add resources with their internal ID and an amount.\nUse one .Add for each resource type the item should need.")]
     public RequiredResourceList RequiredItems => this[""].RequiredItems;
+    
+    [Description("Specifies the resources needed to craft the item.\nUse .Add to add resources with their internal ID and an amount.\nUse one .Add for each resource type the item should need.")]
+    public WeaponRaycastConfigList RayCastConfigList => this[""].RayCastConfigList;
 
 
     [Description("Specifies the resources needed to upgrade the item.\nUse .Add to add resources with their internal ID and an amount. This amount will be multipled by the item quality level.\nUse one .Add for each resource type the upgrade should need.")]
@@ -178,6 +210,20 @@ public class CustomItem
     {
         get => this[""].Rare;
         set => this[""].Rare = value;
+    }
+    
+    [Description("Specifies if the item should appear in the crafting list.\nDefaults to false.")]
+    public bool Craftable
+    {
+        get => this[""].Craftable;
+        set => this[""].Craftable = value;
+    }
+    
+    [Description("Specifies the category of the item when it appears in the crafting list.\nDefaults to weapons.")]
+    public CraftingCategory Category
+    {
+        get => this[""].Category;
+        set => this[""].Category = value;
     }
 
     [Description("Specifies the number of items that should be given to the player with a single craft of the item.\nDefaults to 1.")]
@@ -254,9 +300,6 @@ public class CustomItem
 
     public CustomItem(string prefabName, string description, string mockFrom) : this(PrefabManager.RegisterPrefab(prefabName, description, mockFrom))
     {
-        mockItem = new MockItem() { name = prefabName, description = description, mockFrom = mockFrom };
-        registeredItems.Add(this);
-        ItemMap[Prefab.GetComponent<Item>()] = this;
     }
 
     public CustomItem(GameObject prefab, bool skipRegistering = false)
@@ -271,8 +314,12 @@ public class CustomItem
         ItemMap[Prefab.GetComponent<Item>()] = this;
     }
 
-    private CustomItem(Dictionary<string, MockItem> assetBundleFileName)
+    private CustomItem(Dictionary<string, MockItem> mockedItem)
     {
+        // Populate mockItem with the values from mockedItem
+        mockItem = mockedItem.Values.First();
+        registeredItems.Add(this);
+        //ItemMap[Prefab.GetComponent<Item>()] = this;
     }
 
     public void ToggleConfigurationVisibility(Configurability visible)
@@ -360,106 +407,142 @@ public class CustomItem
         }
     }
 
-    private void registerRecipes(RM instance, GameObject container)
+    private void registerRecipes(RM instance, GameObject container, CustomItem customItem)
     {
-        foreach (CustomItem? customItem in registeredItems)
+        activeCustomItemRequirements[customItem] = new Dictionary<string, List<CraftingItemRequirement>>();
+        itemCraftConfigs.TryGetValue(this, out Dictionary<string, ItemConfig> cfgs);
+        if (!string.IsNullOrWhiteSpace(customItem.mockItem?.mockFrom))
         {
-            activeCustomItemRequirements[customItem] = new Dictionary<string, List<CraftingItemRequirement>>();
-            itemCraftConfigs.TryGetValue(this, out Dictionary<string, ItemConfig> cfgs);
-            if (!string.IsNullOrWhiteSpace(customItem.mockItem?.mockFrom))
+            Item item = null;
+            foreach (Transform allItemsItem in instance.allItems.items.Where(allItemsItem => allItemsItem.name == customItem.mockItem?.mockFrom))
             {
-                Item item = null;
-                foreach (Transform allItemsItem in instance.allItems.items.Where(allItemsItem => allItemsItem.name == customItem.mockItem?.mockFrom))
-                {
-                    item = allItemsItem.GetComponent<Item>();
-                }
-
-                if (item == null) return;
-                
-                Debug.Log("Creating mock from " + customItem.mockItem?.mockFrom);
-
-                Transform newPrefab = Object.Instantiate(item.transform, container.transform, true);
-                if (!newPrefab) return;
-                Item newItemComponent = newPrefab.GetComponent<Item>();
-                if (!newItemComponent) return;
-                newPrefab.name = customItem.mockItem?.name ?? "MockItem";
-                newItemComponent.name = customItem.mockItem?.name ?? "MockItem";
-
-                // Set the values on the newItemComponent from the config on customItem
-                newItemComponent.level = customItem.CustomItemRequirements[customItem.mockItem?.name].Level;
-                newItemComponent.rare = customItem.CustomItemRequirements[customItem.mockItem?.name].Rare;
-                newItemComponent.craftAmount = customItem.CustomItemRequirements[customItem.mockItem?.name].CraftAmount;
-                newItemComponent.stackAmount = customItem.CustomItemRequirements[customItem.mockItem?.name].Stack;
-                newItemComponent.canBeSold = customItem.CustomItemRequirements[customItem.mockItem?.name].CanBeSold;
-                newItemComponent.condition = customItem.CustomItemRequirements[customItem.mockItem?.name].Condition;
-                newItemComponent.MaxCondition = customItem.CustomItemRequirements[customItem.mockItem?.name].MaxCondition;
-                newItemComponent.equipmentSlotType = customItem.CustomItemRequirements[customItem.mockItem?.name].EquipmentSlotType;
-                LoadSpriteFromURL(customItem.CustomItemRequirements[customItem.mockItem?.name].Icon, (sprite) =>
-                {
-                    if (sprite != null)
-                    {
-                        newItemComponent.icon = sprite.texture;
-                    }
-                });
-                
-                // Print the values to the console
-                Debug.Log($"Created mock item with name: {newItemComponent.name} and level: {newItemComponent.level} and rare: {newItemComponent.rare} and craftAmount: {newItemComponent.craftAmount} and stackAmount: {newItemComponent.stackAmount} and canBeSold: {newItemComponent.canBeSold} and condition: {newItemComponent.condition} and MaxCondition: {newItemComponent.MaxCondition} and equipmentSlotType: {newItemComponent.equipmentSlotType} and icon: {newItemComponent.icon} {customItem.Icon}");
-
-                // Find the max ItemID and set the new one
-                int maxID = instance.allItems.items.Max(i => i.GetComponent<Item>()?.ItemID ?? 0);
-                newItemComponent.ItemID = maxID + 1;
-                newItemComponent.itemIndex = newItemComponent.ItemID;
-                newItemComponent.localizedItemName = LocalizationRuntimeManager.CreateLocalizedString(LocalizationSettings.StringDatabase.DefaultTable, $"{newPrefab.name}_{newItemComponent.ItemID.ToString()}", customItem.mockItem?.name);
-                newItemComponent.localizedItemName.FallbackState = FallbackBehavior.UseFallback;
-                newItemComponent.localizedItemDescription = LocalizationRuntimeManager.CreateLocalizedString(LocalizationSettings.StringDatabase.DefaultTable, $"{newPrefab.name}_{newItemComponent.ItemID.ToString()}_description", customItem.mockItem?.description);
-                newItemComponent.localizedItemDescription.FallbackState = FallbackBehavior.UseFallback;
-                newItemComponent.GetCurrentLocaleAndRefresh();
-                instance.allItems.AddItemDifferentName(newPrefab);
-                if (!instance.ItemDictionary.ContainsKey(newItemComponent.ItemID))
-                {
-                    instance.ItemDictionary.Add(newItemComponent.ItemID, newItemComponent);
-                    newItemComponent.itemIndex = newItemComponent.ItemID;
-                }
-
-                Craftable craftable = newPrefab.GetComponent<Craftable>();
-                if (craftable)
-                {
-                    // Custom code here to change the values for the new prefab
-                    craftable.itemRequirements = customItem.RequiredItems.Requirements.Select(r => new CraftingItemRequirement { item = instance.allItems.items.FirstOrDefault(x => x.name == r.itemName), amount = r.amount }).ToArray();
-
-                    instance._allCraftables.Add(craftable);
-                    craftable.NeedBlueprint = false;
-                }
-
-                if (newPrefab && newPrefab.TryGetComponent(out Blueprint component3))
-                {
-                    if (component3 && component3.UnlockItems.Length != 0)
-                    {
-                        foreach (Item unlockItem in component3.UnlockItems)
-                        {
-                            Craftable component4;
-                            if (unlockItem.TryGetComponent(out component4))
-                                component4.NeedBlueprint = true;
-                        }
-                    }
-
-                    if (component3 && component3.UnlockBuildings.Length != 0)
-                    {
-                        foreach (BuildingPiece unlockBuilding in component3.UnlockBuildings)
-                        {
-                            if (!(unlockBuilding == null))
-                                unlockBuilding.GetComponent<Craftable>().NeedBlueprint = true;
-                        }
-                    }
-                }
-
-                newItemComponent.localizedItemName.RefreshString();
-                newItemComponent.localizedItemDescription.RefreshString();
-                NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogDebug($"{customItem.mockItem?.name} created! with ID: {newItemComponent.ItemID} " +
-                                                                           $"and name: {newItemComponent.name} " +
-                                                                           $"and display name: {newItemComponent.GetDisplayName()} and description {newItemComponent.GetDisplayDescription()} and localized name: {LocalizationRuntimeManager.GetString(newItemComponent.localizedItemName)} and localized description: {LocalizationRuntimeManager.GetString(newItemComponent.localizedItemDescription)}");
+                item = allItemsItem.GetComponent<Item>();
             }
+
+            if (item == null) return;
+
+            Debug.Log($"[{Assembly.GetExecutingAssembly().GetName().Name}] Creating mock from " + customItem.mockItem?.mockFrom);
+
+            Transform newPrefab = Object.Instantiate(item.transform, container.transform, true);
+            if (!newPrefab) return;
+            Item newItemComponent = newPrefab.GetComponent<Item>();
+            if (!newItemComponent) return;
+            newPrefab.name = customItem.mockItem?.name ?? "MockItem";
+            newItemComponent.name = customItem.mockItem?.name ?? "MockItem";
+
+            // Set the values on the newItemComponent from the config on customItem
+            newItemComponent.level = customItem.Level;
+            newItemComponent.rare = customItem.Rare;
+            newItemComponent.craftAmount = customItem.CraftAmount;
+            newItemComponent.stackAmount = customItem.Stack;
+            newItemComponent.canBeSold = customItem.CanBeSold;
+            newItemComponent.condition = customItem.Condition;
+            newItemComponent.MaxCondition = customItem.MaxCondition;
+            newItemComponent.equipmentSlotType = customItem.EquipmentSlotType;
+            var coroutine = plugin.StartCoroutine(LoadSpriteFromURL(customItem.Icon, (sprite) =>
+            {
+                if (sprite != null)
+                {
+                    newItemComponent.icon = sprite.texture;
+                }
+            }));
+            //plugin.StopCoroutine(coroutine);
+
+            // Print the values to the console
+            Debug.Log($"[{Assembly.GetExecutingAssembly().GetName().Name}] Created mock item with name: {newItemComponent.name} " +
+                      $"and level: {newItemComponent.level} " +
+                      $"and rare: {newItemComponent.rare} " +
+                      $"and craftAmount: {newItemComponent.craftAmount} " +
+                      $"and stackAmount: {newItemComponent.stackAmount} " +
+                      $"and canBeSold: {newItemComponent.canBeSold} " +
+                      $"and condition: {newItemComponent.condition} " +
+                      $"and MaxCondition: {newItemComponent.MaxCondition} " +
+                      $"and equipmentSlotType: {newItemComponent.equipmentSlotType} " +
+                      $"and icon: {newItemComponent.icon} {customItem.Icon}");
+
+            // Find the max ItemID and set the new one
+            int maxID = instance.allItems.items.Max(i => i.GetComponent<Item>()?.ItemID ?? 0);
+            newItemComponent.ItemID = maxID + 1;
+            newItemComponent.itemIndex = newItemComponent.ItemID;
+            newItemComponent.localizedItemName = LocalizationRuntimeManager.CreateLocalizedString(LocalizationSettings.StringDatabase.DefaultTable, $"{newPrefab.name}_{newItemComponent.ItemID.ToString()}", customItem.mockItem?.name);
+            newItemComponent.localizedItemName.FallbackState = FallbackBehavior.UseFallback;
+            newItemComponent.localizedItemDescription = LocalizationRuntimeManager.CreateLocalizedString(LocalizationSettings.StringDatabase.DefaultTable, $"{newPrefab.name}_{newItemComponent.ItemID.ToString()}_description", customItem.mockItem?.description);
+            newItemComponent.localizedItemDescription.FallbackState = FallbackBehavior.UseFallback;
+            newItemComponent.GetCurrentLocaleAndRefresh();
+            instance.allItems.AddItemDifferentName(newPrefab);
+            if (!instance.ItemDictionary.ContainsKey(newItemComponent.ItemID))
+            {
+                instance.ItemDictionary.Add(newItemComponent.ItemID, newItemComponent);
+                newItemComponent.itemIndex = newItemComponent.ItemID;
+            }
+
+            Craftable craftable = newPrefab.GetComponent<Craftable>();
+            if (craftable || customItem.Craftable)
+            {
+                if (!craftable)
+                {
+                    craftable = newPrefab.gameObject.AddComponent<Craftable>();
+                }
+
+                AddCraftableRequirements(customItem, craftable, instance);
+            }
+
+            if (newPrefab && newPrefab.TryGetComponent(out Blueprint component3))
+            {
+                if (component3 && component3.UnlockItems.Length != 0)
+                {
+                    foreach (Item unlockItem in component3.UnlockItems)
+                    {
+                        Craftable component4;
+                        if (unlockItem.TryGetComponent(out component4))
+                            component4.NeedBlueprint = true;
+                    }
+                }
+
+                if (component3 && component3.UnlockBuildings.Length != 0)
+                {
+                    foreach (BuildingPiece unlockBuilding in component3.UnlockBuildings)
+                    {
+                        if (!(unlockBuilding == null))
+                            unlockBuilding.GetComponent<Craftable>().NeedBlueprint = true;
+                    }
+                }
+            }
+
+            // Add the new prefab to the dictionary
+            if (!registeredItemsItemComp.ContainsKey(customItem))
+                registeredItemsItemComp.Add(customItem, newItemComponent);
+
+            newItemComponent.localizedItemName.RefreshString();
+            newItemComponent.localizedItemDescription.RefreshString();
+            Debug.Log($"[{Assembly.GetExecutingAssembly().GetName().Name}] {customItem.mockItem?.name} created! with ID: {newItemComponent.ItemID} " +
+                      $"and name: {newItemComponent.name} " +
+                      $"and display name: {newItemComponent.GetDisplayName()} and description {newItemComponent.GetDisplayDescription()} and localized name: {LocalizationRuntimeManager.GetString(newItemComponent.localizedItemName)} and localized description: {LocalizationRuntimeManager.GetString(newItemComponent.localizedItemDescription)}");
         }
+    }
+    
+    private void AddCraftableRequirements(CustomItem customItem, Craftable craftable, RM instance)
+    {
+        foreach (Requirement requirement in customItem.RequiredItems.Requirements)
+        {
+            if (!activeCustomItemRequirements[customItem].ContainsKey(requirement.itemName))
+            {
+                activeCustomItemRequirements[customItem].Add(requirement.itemName, new List<CraftingItemRequirement>());
+            }
+
+            activeCustomItemRequirements[customItem][requirement.itemName].Add(new CraftingItemRequirement { item = instance.allItems.items.FirstOrDefault(x => x.name == requirement.itemName), amount = requirement.amount });
+        }
+        craftable.craftingCategory = customItem.Category;
+        craftable.neededWorkstationType = (WorkstationType)customItem.Crafting.Stations[0].Table;
+        craftable.NeedResearchTableLevel = customItem.Crafting.Stations[0].level;
+
+
+        // Add the customItemRequirements to the craftable.ItemRequirements
+        craftable.itemRequirements = activeCustomItemRequirements[customItem].SelectMany(x => x.Value).ToArray();
+        craftable.Debris = activeCustomItemRequirements[customItem].SelectMany(x => x.Value).ToArray();
+        if (!instance._allCraftables.Contains(craftable))
+            craftable.NeedBlueprint = false;
+        instance._allCraftables.Add(craftable);
     }
 
     internal static IEnumerator LoadSpriteFromURL(string? imageURL, Action<Sprite> callback)
@@ -475,7 +558,7 @@ public class CustomItem
 
         if (www.result is UnityWebRequest.Result.ConnectionError or UnityWebRequest.Result.ProtocolError)
         {
-            Debug.LogError("Error while fetching image: " + www.error);
+            Debug.LogError($"[{Assembly.GetExecutingAssembly().GetName().Name}] Error while fetching image: " + www.error);
             callback(null!);
         }
         else
@@ -500,16 +583,74 @@ public class CustomItem
         {
             container = GameObject.Find("SunkenlandItemManagerContainer");
         }
-        
-        // Print all transforms in __instance.allItems.items
-        foreach (Transform allItemsItem in __instance.allItems.items)
-        {
-            NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"allItemsItem: {allItemsItem}");
-        }
 
         foreach (CustomItem customItem in registeredItems)
         {
-            customItem.registerRecipes(__instance, container);
+            customItem.registerRecipes(__instance, container, customItem);
+        }
+    }
+
+    [HarmonyPriority(Priority.VeryHigh)]
+    public static void Patch_AddItemToFPSPlayer(FPSPlayer __instance)
+    {
+        var weaponHolder = GameObject.Find("Weapon Pivot V Bob");
+        if (weaponHolder != null)
+        {
+            Debug.Log($"[{Assembly.GetExecutingAssembly().GetName().Name}] Found weaponHolder: {weaponHolder.name} with {weaponHolder.transform.childCount} children");
+
+            foreach (KeyValuePair<CustomItem, Item> customItem in registeredItemsItemComp)
+            {
+                // Get all weapons that we need to clone something from
+                var weaponClonedFrom = RM.code.allItems.GetItemWithName(customItem.Key.mockItem?.mockFrom);
+                if (weaponClonedFrom == null) continue;
+                // Print the weaponClonedFrom's name to the console
+                Debug.Log($"[{Assembly.GetExecutingAssembly().GetName().Name}] Found weaponClonedFrom: {weaponClonedFrom.name}");
+
+                // Now find the weapon's display name in the weaponHolder based on it's Item component
+                Transform? weaponBehaviourTransform =
+                (
+                    from Transform child in weaponHolder.transform
+                    let wb = child.GetComponent<WeaponBehavior>()
+                    where wb != null && wb.WeaponItem == weaponClonedFrom.GetComponent<Item>()
+                    select child
+                ).FirstOrDefault();
+
+                if (weaponBehaviourTransform == null)
+                {
+                    Debug.LogError($"[{Assembly.GetExecutingAssembly().GetName().Name}] Could not find WeaponBehavior for {weaponClonedFrom.name} with specified WeaponItem.");
+                    continue;
+                }
+
+
+                // Print the weaponDisplayName's name to the console
+                Debug.Log($"[{Assembly.GetExecutingAssembly().GetName().Name}] Found WeaponBehavior: {weaponBehaviourTransform.name}");
+
+                // Clone the weaponDisplayName and set it's parent to the weaponHolder
+                var newWeapon = Object.Instantiate(weaponBehaviourTransform, weaponHolder.transform);
+                // Set the new weapon's name to the customItem's name
+                newWeapon.name = customItem.Key.mockItem?.name;
+                // Get the WeaponBehaviour component from the new weapon
+                var weaponBehaviour = newWeapon.GetComponent<WeaponBehavior>();
+                // Set the weaponBehaviour's item to the customItem's item
+                weaponBehaviour.WeaponItem = customItem.Value;
+                // Set the weaponBehaviour's weaponNumber to the customItem's itemID or something? Testing this part to see if it allows equip.
+                weaponBehaviour.weaponNumber = weaponHolder.transform.childCount + 1;
+
+                // Add to the weapon Order
+                if (!PlayerWeapons.code.weaponOrder.Contains(weaponBehaviour))
+                {
+                    var newWeaponOrder = new List<WeaponBehavior>(PlayerWeapons.code.weaponOrder);
+                    newWeaponOrder.Add(weaponBehaviour);
+                    PlayerWeapons.code.weaponOrder = newWeaponOrder.ToArray();
+                }
+
+                if (!PlayerWeapons.code.weaponBehaviors.Contains(weaponBehaviour))
+                {
+                    var newWeaponBehaviors = new List<WeaponBehavior>(PlayerWeapons.code.weaponBehaviors);
+                    newWeaponBehaviors.Add(weaponBehaviour);
+                    PlayerWeapons.code.weaponBehaviors = newWeaponBehaviors.ToArray();
+                }
+            }
         }
     }
 }
@@ -521,6 +662,7 @@ public static class PrefabManager
     {
         Harmony harmony = new("org.bepinex.helpers.ItemManager");
         harmony.Patch(AccessTools.DeclaredMethod(typeof(RM), nameof(RM.LoadResources)), postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(CustomItem), nameof(CustomItem.Patch_RMLoadResources))));
+        harmony.Patch(AccessTools.DeclaredMethod(typeof(FPSPlayer), nameof(FPSPlayer.Start)), postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(CustomItem), nameof(CustomItem.Patch_AddItemToFPSPlayer))));
     }
 
     private struct BundleId
@@ -545,14 +687,13 @@ public static class PrefabManager
 
         if (assetBundle == null)
         {
-            throw new Exception($"Failed to load asset bundle {assetBundleFileName}, please make sure you have set this as an embedded resource in your project and that the name matches the filename.");
+            throw new Exception($"[{Assembly.GetExecutingAssembly().GetName().Name}] Failed to load asset bundle {assetBundleFileName}, please make sure you have set this as an embedded resource in your project and that the name matches the filename.");
         }
 
         return assetBundle;
     }
 
     private static readonly List<GameObject> prefabs = new();
-    private static readonly Dictionary<string, MockItem> mockPrefabs = new();
 
     public static GameObject RegisterPrefab(string assetBundleFileName, string prefabName) => RegisterPrefab(GetAssetBundleFromResources(assetBundleFileName), prefabName);
 
@@ -560,7 +701,6 @@ public static class PrefabManager
 
     public static Dictionary<string, MockItem> RegisterPrefab(string prefabName, string description, string mockFrom)
     {
-        mockPrefabs.Add(prefabName, new MockItem() { name = prefabName, description = description, mockFrom = mockFrom });
         return new Dictionary<string, MockItem>() { { prefabName, new MockItem() { name = prefabName, description = description, mockFrom = mockFrom } } };
     }
 
@@ -579,7 +719,7 @@ public class LocalizationRuntimeManager : MonoBehaviour
     {
         LocalizationSettings.StringDatabase.GetTable(LocalizationSettings.StringDatabase.DefaultTable).AddEntry(key, value);
 
-        NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"Added entry with key: {key} and value: {value} to table: {tableName}");
+        Debug.Log($"[{Assembly.GetExecutingAssembly().GetName().Name}] Added entry with key: {key} and value: {value} to table: {tableName}");
 
         LocalizedString localizedString = new LocalizedString
         {
@@ -600,14 +740,8 @@ public class LocalizationRuntimeManager : MonoBehaviour
             {
                 return entry.LocalizedValue;
             }
-            else
-            {
-                NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"No entry found with key: {localizedString.TableEntryReference} in table: {localizedString.TableReference}");
-            }
-        }
-        else
-        {
-            NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogError($"Table not found: {localizedString.TableReference}");
+
+            Debug.LogError($"[{Assembly.GetExecutingAssembly().GetName().Name}] No entry found with key: {localizedString.TableEntryReference} in table: {localizedString.TableReference}");
         }
 
         return null;

@@ -23,6 +23,7 @@ namespace NewPrefabCloneTest
         private static string ConfigFileFullPath = Paths.ConfigPath + Path.DirectorySeparatorChar + ConfigFileName;
         private readonly Harmony _harmony = new(ModGUID);
         public static readonly ManualLogSource NewPrefabCloneTestLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
+        public static NewPrefabCloneTestPlugin Instance { get; private set; } = null!;
 
 
         public enum Toggle
@@ -33,33 +34,49 @@ namespace NewPrefabCloneTest
 
         public void Awake()
         {
-            exampleConfig = Config.Bind("1 - General", "Example Config", Toggle.On, "If on, do something here.");
-
-            CustomItem testingItem = new CustomItem("18005882300", "Empire Theme", "I_Gasoline");
-            //testingItem.Crafting.Add(WorkTable.Stove, 1);
-            testingItem.RequiredItems.Add("I_Gasoline", 1);
+            Instance = this;
+            CustomItem testingItem = new CustomItem("Faction Coin", "A coin that, when used, changes your faction randomly", "I_Gasoline");
+            testingItem.Crafting.Add(WorkTable.Stove, 1);
+            testingItem.RequiredItems.Add("I_Gasoline", 10);
+            testingItem.RequiredItems.Add("A2B_Iron Axe", 1);
+            testingItem.Category = CraftingCategory.materials;
             testingItem.Level = 1;
             testingItem.Rare = false;
             testingItem.CraftAmount = 1;
+            testingItem.Craftable = true;
             testingItem.Stack = 10;
             testingItem.CanBeSold = false;
             testingItem.Condition = 100f;
             testingItem.MaxCondition = 100f;
             testingItem.EquipmentSlotType = EquipmentSlotType.Armor;
             testingItem.Icon = "https://gcdn.thunderstore.io/live/repository/icons/Azumatt-FactionAssigner-1.0.0.png.128x128_q95.png";
-            
-            CustomItem testingItem2 = new CustomItem("My Super Cool Sword", "Empire Theme", "Iron Sword");
-            //testingItem.Crafting.Add(WorkTable.Stove, 1);
-            testingItem2.RequiredItems.Add("I_Gasoline", 1);
+
+            CustomItem testingItem2 = new CustomItem("My Iron Axe", "Azu's Cool Shit", "A2B_Iron Axe");
+            testingItem2.Crafting.Add(WorkTable.None, 1);
+            testingItem2.RequiredItems.Add("A2B_Iron Axe", 1);
             testingItem2.Level = 1;
             testingItem2.Rare = false;
             testingItem2.CraftAmount = 1;
+            testingItem2.Craftable = true;
             testingItem2.Stack = 10;
             testingItem2.CanBeSold = false;
             testingItem2.Condition = 100f;
             testingItem2.MaxCondition = 100f;
-            testingItem2.EquipmentSlotType = EquipmentSlotType.Armor;
-            testingItem2.Icon = "https://gcdn.thunderstore.io/live/repository/icons/Azumatt-FactionAssigner-1.0.0.png.128x128_q95.png";
+            testingItem2.EquipmentSlotType = EquipmentSlotType.None;
+            testingItem2.Icon = "https://cdn-icons-png.flaticon.com/512/6436/6436195.png";
+            
+            CustomItem testingItem4 = new CustomItem("Shotgun for the Homies", "Azu's Cool Shit", "A4_Double Barrel Shotgun");
+            testingItem4.Crafting.Add(WorkTable.Stove, 1);
+            testingItem4.RequiredItems.Add("I_Gasoline", 1);
+            testingItem4.Level = 3;
+            testingItem4.Rare = false;  
+            testingItem4.CraftAmount = 1;
+            testingItem4.Stack = 10;
+            testingItem4.CanBeSold = false;
+            testingItem4.Condition = 100f;
+            testingItem4.MaxCondition = 100f;
+            testingItem4.EquipmentSlotType = EquipmentSlotType.None;
+            testingItem4.Icon = "https://gcdn.thunderstore.io/live/repository/icons/Azumatt-FactionAssigner-1.0.0.png.128x128_q95.png";
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
@@ -100,8 +117,6 @@ namespace NewPrefabCloneTest
 
         #region ConfigOptions
 
-        private static ConfigEntry<Toggle> exampleConfig = null!;
-
         private class ConfigurationManagerAttributes
         {
             [UsedImplicitly] public int? Order;
@@ -126,7 +141,7 @@ namespace NewPrefabCloneTest
         #endregion
     }
 
-    [HarmonyPatch(typeof(RM), nameof(RM.LoadResources))]
+    /*[HarmonyPatch(typeof(RM), nameof(RM.LoadResources))]
     static class RMLoadResourcesPatch
     {
         static void Postfix(RM __instance)
@@ -138,5 +153,5 @@ namespace NewPrefabCloneTest
                     NewPrefabCloneTestPlugin.NewPrefabCloneTestLogger.LogWarning($"Found Item {allItemsItem.name}");
             }
         }
-    }
+    }*/
 }
